@@ -13,12 +13,12 @@ A multi-model pipeline that turns a rough product idea into reviewed, tested, wo
 
 ```mermaid
 flowchart LR
-    A[Concept] --> B[Spec<br/>human gate]
-    B --> C[Builder model]
-    C --> D[Reviewer model<br/>different provider]
-    D --> E[Live tests]
-    E --> F[Human approval]
-    F --> G[Deploy]
+    A["Concept"] --> B["Spec (human gate)"]
+    B --> C["Builder model"]
+    C --> D["Reviewer model (different provider)"]
+    D --> E["Live tests"]
+    E --> F["Human approval"]
+    F --> G["Deploy"]
     classDef gate fill:#1F3A68,stroke:#1F3A68,color:#FFFFFF
     classDef ai fill:#2F7D4F,stroke:#2F7D4F,color:#FFFFFF
     classDef approve fill:#1F3A68,stroke:#B3261E,stroke-width:3px,color:#FFFFFF
