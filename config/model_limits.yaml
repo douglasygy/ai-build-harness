@@ -1,0 +1,19 @@
+# Max output tokens per model, from OpenRouter's public model list (top_provider.max_completion_tokens),
+# checked 2026-09-30. config_loader clamps any role's max_tokens down to the model's entry here (and
+# prints a warning) - so a requested number above a model's real ceiling never reaches the provider.
+# Models not listed are not clamped. Add an entry when adding a new model.
+max_output_tokens:
+  anthropic/claude-fable-5: 128000
+  anthropic/claude-fable-5.1: 128000
+  anthropic/claude-fable-5.2: 128000
+  anthropic/claude-opus-5: 128000
+  anthropic/claude-sonnet-5: 128000
+  anthropic/claude-sonnet-5.5: 128000
+  deepseek/deepseek-r1-0528: 32768
+  deepseek/deepseek-v4-pro: 384000
+  google/gemini-3.1-pro-preview: 65536
+  google/gemini-3.8-flash: 65536
+  openai/gpt-6-astra: 128000
+  openai/gpt-6-luna: 128000
+  openai/gpt-6-sol: 128000
+  openai/gpt-6.1-sol: 128000

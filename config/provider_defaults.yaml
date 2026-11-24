@@ -1,0 +1,11 @@
+# Default host OpenRouter must route each vendor's models to (Douglas, 2026-09-30): the vendor's
+# own first-party provider, so prompt caching stays on one host and quality/limits are predictable.
+# Key = model vendor prefix (the part before "/"), value = OpenRouter provider slug.
+# A vendor with no entry is NOT pinned (deepseek/* has no first-party DeepSeek host on OpenRouter for
+# the models in use, so OpenRouter chooses; add a line here to pin it).
+# Precedence, highest first: a provider chosen by Douglas after a failure (project state file),
+# then a role's explicit provider_order in models.yaml, then this file.
+default_hosts:
+  anthropic: anthropic
+  openai: openai
+  google: google-ai-studio

@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Transient run state - resumable within a machine, never meaningful to commit
+.build_checkpoint.json
+.n8n_build_checkpoint.json
+
+# Throwaway smoke-test projects - never committed, fully deletable as a single folder
+projects/_smoketest/
+projects/_n8n_smoketest/

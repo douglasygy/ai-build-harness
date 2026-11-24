@@ -1,0 +1,208 @@
+﻿openrouter_base_url: "https://openrouter.ai/api/v1"
+
+# Safety valve: if a single build_and_review.py run's cumulative token usage crosses this,
+# the run aborts early rather than continuing indefinitely. Actual dollar cost per run is
+# visible in the Langfuse dashboard afterward.
+#
+# Raised 500000 -> 1000000 (2026-09-28, Douglas's direct instruction, relayed via video-generator-78
+# after confirming it directly): total_tokens is persisted across checkpoint resumes
+# (pipeline/checkpoint.py's _PERSISTED_KEYS) and compared cumulatively against this ceiling
+# (pipeline/token_guard.py's over_budget) - by design, so a resume can't reset the safety valve for
+# free. But once the escalation fix (5dc36b0) started genuinely working - real modules actually
+# being written on creative-team's rebuild, not the empty-run collapse from before - that same
+# cumulative accounting meant a resumed attempt could start already near or over 500,000 tokens from
+# earlier legitimate work and hit the ceiling almost immediately, with no room left to keep making
+# real progress. The ceiling was blocking finishing genuine work, not catching waste.
+max_run_tokens: 1000000
+
+roles:
+  # --- Concept-stage bounce (review_concept.py): concept_advocate and business_analyst go
+  # back and forth for a few rounds exploring edge cases/gaps, then hand a structured summary
+  # back to Claude Code to turn into actual decision prompts for Douglas. Neither ever decides
+  # anything about what the product should do - only surfaces questions and safe defaults.
+  concept_advocate:
+    # Represents Agent 1's (Claude Code's) drafting perspective during the bounce. Deliberately
+    # Anthropic, matching concept intake's own vendor, so business_analyst's non-Anthropic check
+    # is a genuinely independent second opinion, not two flavors of the same model. Sonnet 5, not
+    # Haiku: this role judges what's safe to resolve itself vs. what must escalate to Douglas -
+    # judgment quality matters more here than cost. Cost difference vs. Haiku is only ~$0.02-0.05
+    # per concept cycle (this role only handles a slice of total bounce tokens), not worth trading
+    # down for.
+    # 2026-11-17 (Douglas): claude-fable-5.1 -> claude-fable-5.2 ($10/$50 -> $8/$40 per M, same 1M context
+    # and 128K max output, newer and cheaper).
+    model: "anthropic/claude-fable-5.2"
+    base_url: "https://openrouter.ai/api/v1"
+    temperature: 0.4
+    # Raised 4096 -> 50000 (Douglas, 2026-09-26) -> 100000 (Douglas, 2026-09-30, together with the
+    # switch from claude-sonnet-5 to claude-fable-5.1). Fable 5.1: 1M context, 128K max output.
+    max_tokens: 30000
+
+  business_analyst:
+    # Reasoning-specialized, MIT licensed, deliberately non-Anthropic (concept intake is Claude).
+    # Swapped deepseek/deepseek-r1 -> deepseek/deepseek-r1-0528 (Douglas's explicit call,
+    # 2026-09-29, relayed via video-generator-78) - real incident: deepseek-r1's 64,000-token
+    # context couldn't hold creative-team's ~22K-token spec plus this role's own 50,000 max_tokens
+    # (HTTP 400), silently falling back to the standing Anthropic fallback model TWICE - which
+    # breaks this role's whole point (a genuinely independent, non-Anthropic second opinion) without
+    # anyone noticing (see model_fallback.py's own fix for the OTHER half of this incident).
+    # deepseek-r1-0528's context is 163,840 (verified against OpenRouter's own listing).
+    model: "deepseek/deepseek-r1-0528"
+    base_url: "https://openrouter.ai/api/v1"
+    temperature: 0.3
+    # Raised 4096 -> 50000 (Douglas's explicit call, 2026-09-26) -> 100000 (2026-09-29, same
+    # incident as above). Douglas asked for 200000, but 200,000 + a ~22K-token spec would exceed
+    # deepseek-r1-0528's own 163,840-token context outright - the exact class of failure this
+    # change exists to fix, just reintroduced at a different number. 100,000 leaves ~63,840 tokens
+    # of input headroom (spec text + system prompt + conversation-so-far) - comfortably covers
+    # today's ~22K spec with real room for a project whose spec runs several times larger, without
+    # sitting so close to the ceiling that ordinary per-request overhead risks the same HTTP 400.
+    # 2026-09-30: clamped 100000 -> 32768, deepseek-r1-0528's real max output (OpenRouter listing).
+    max_tokens: 30000
+
+  builder:
+    # Reverted from anthropic/claude-opus-5 back to anthropic/claude-sonnet-5 as the STANDING
+    # default (Douglas's explicit call, 2026-09-27, superseding the 2026-09-26 raise to Opus below).
+    # Opus remains available as a per-run --builder-model override for a complex/paying-client build
+    # - same override path that existed before the raise, just no longer the default.
+    #
+    # Prior history (2026-09-26): raised from anthropic/claude-sonnet-5 to anthropic/claude-opus-5 as
+    # the STANDING default - previously Sonnet was the default with Opus reserved as a per-run
+    # --builder-model override for a complex/paying-client build; every build then used Opus unless
+    # overridden down. Real cost consequence, not just a capability upgrade: Opus 5 is $5/$25 per M
+    # input/output tokens vs Sonnet 5's $2/$10 - 2.5x the cost of every build using this role,
+    # confirmed against OpenRouter's own current listing.
+    # 2026-09-30 (Douglas): switched anthropic/claude-sonnet-5 -> openai/gpt-6-sol, max_tokens 300000
+    # requested but gpt-6-sol's real max output is 128,000 (OpenRouter listing), so set to 128000.
+    # NOTE: the temperature/reasoning_max_tokens/provider_order settings below were written for
+    # Anthropic; they are removed for this OpenAI model (Anthropic-only constraints).
+    model: "openai/gpt-6-sol"
+    base_url: "https://openrouter.ai/api/v1"
+    # temperature 1 kept from the Anthropic-era config (reasoning models commonly require it).
+    # Removed for gpt-6-sol: reasoning_max_tokens (Anthropic thinking budget) and provider_order
+    # ["anthropic"] (would misroute an OpenAI model). Prior history: builder was claude-sonnet-5 at 64000.
+    temperature: 1
+    max_tokens: 64000
+    # Provider: pinned to the vendor default host (openai) by config/provider_defaults.yaml.
+
+  builder_n8n:
+    # Separate role used ONLY for --platform n8n builds (see pipeline/nodes/builder_node.py) - the
+    # "builder" role above is untouched and still used for every other (python) project. Switched
+    # away from anthropic/claude-sonnet-5 after it reproducibly consumed ~100% of its token budget
+    # as invisible reasoning on this task regardless of temperature/reasoning-cap/provider-pin
+    # settings (see builder role's history above) - looked like a serving-side issue specific to
+    # that very-new model+task combination via OpenRouter, not something fixable by further request
+    # tuning. deepseek-v4-pro: open-weights #1 on SWE-bench Verified (80.6%), built for coding/
+    # engineering/long-horizon agent work - Douglas's explicit pick for this role. Different vendor
+    # from reviewer (Qwen) so the cross-vendor requirement below still holds.
+    #
+    # max_tokens raised 8192 -> 64000 (same fix, same reasoning, as the "builder" role's own
+    # history above): a real incident on the seo-blog-bot project, whose SPEC.md grew past 28,000
+    # characters over the course of one long session - the plan step reproducibly hit
+    # completion_tokens == reasoning_tokens == 8192, finish_reason "length", zero visible output,
+    # every single attempt. This wasn't a per-request fluke (same failure, same token count, on a
+    # completely fresh --fresh --fresh-n8n run) - the model was reasoning about a large spec and
+    # running out of budget before producing any of the actual delimited plan text. No project's
+    # spec had gotten this large before, which is why builder_n8n hadn't shown this symptom yet.
+    model: "deepseek/deepseek-v4-pro"
+    base_url: "https://openrouter.ai/api/v1"
+    temperature: 0.1
+    max_tokens: 64000
+
+  pm:
+    # Optional, scale-adaptive role (see AGENTS.md "Scale-adaptive roles: PM and Architect") - only
+    # part of a project's roster when Douglas decides, at session start or mid-project, that the
+    # work spans multiple workflows/phases and needs real coordination. Turns an approved concept
+    # into Epics and User Stories - scoping and sequencing already-approved work, never deciding
+    # product intent itself.
+    model: "openai/gpt-6-luna"
+    base_url: "https://openrouter.ai/api/v1"
+    temperature: 0.3
+    # 2026-09-30 (Douglas): gpt-5.6-luna -> gpt-6-luna, 8192 -> 50000.
+    max_tokens: 20000
+
+  architect:
+    # Optional, scale-adaptive role - see pm above and AGENTS.md. Runs once per project, before the
+    # plan phase, deciding what the plan phase currently has to assume on its own: one workflow or
+    # several, where data lives, credential/security architecture, and a system-level regression
+    # strategy across multiple interacting workflows. Different vendor from builder_n8n (DeepSeek),
+    # satisfying the no-cannibalizing principle against the role it most needs independence from.
+    # Shares a vendor family with reviewer (Qwen) - fine, since the enforced constraint is Architect
+    # vs. Builder, not Architect vs. Reviewer.
+    model: "openai/gpt-6-astra"
+    base_url: "https://openrouter.ai/api/v1"
+    temperature: 0.2
+    # 2026-09-30 (Douglas): qwen3-30b-a3b-thinking -> openai/gpt-6-astra, 8192 -> 100000. Note this
+    # is now the same vendor as builder (gpt-6-sol); no code enforces Architect-vs-builder vendor
+    # difference (only builder-vs-reviewer), so this is allowed.
+    max_tokens: 30000
+
+  build_scribe:
+    # The DESCRIPTIVE half of the two-tier memory architecture (see AGENTS.md "Decision log &
+    # preference learning"). Runs after every single build_and_review.py call (Douglas's explicit
+    # choice, made aware this means real per-run cost) to turn that run's result into a clean,
+    # OBJECTIVE record - what happened, what changed, what blocked it - with zero evaluation of
+    # whether it was the right call. Kept strictly separate from preference_analyst below so
+    # evaluation never gets contaminated by how the description itself was phrased. Cheap and fast
+    # is exactly right for this job: it runs constantly and never has to be the smartest model in
+    # the pipeline, just an honest one.
+    model: "google/gemini-3.8-flash"
+    base_url: "https://openrouter.ai/api/v1"
+    temperature: 0.1
+    # Raised 4096 -> 65536 (2026-09-30, Douglas): the model's real output ceiling on OpenRouter.
+    max_tokens: 65536
+
+  preference_analyst:
+    # The EVALUATIVE half (the "Gatekeeper") - reads build_scribe's descriptive summaries plus
+    # memory/decision_log.jsonl and refreshes memory/decision-patterns.md, extracting lessons and
+    # judging decisions against them. Deliberately NOT Anthropic: concept intake and this pipeline's
+    # own conversational driving are already Claude, so learning an unbiased model of Douglas's
+    # actual decision-making needs the same genuine independence business_analyst already has, for
+    # the same reason. Also deliberately NOT a smaller/startup-vendor model (an earlier pick,
+    # MiniMax M3, was rejected by Douglas on exactly this basis) - this role is meant to be portable
+    # to future pipelines and long-lived, so it runs on a large, established AI lab's model. Gemini
+    # 3.1 Pro's stronger reasoning tier over Flash matters here because this is the judgment step,
+    # not the description step - and it costs roughly the same order of magnitude as this pipeline's
+    # other evaluative roles (PM, Architect), not several times more like Claude would.
+    # 2026-11-17: tried google/gemini-4-carbon ($2/$10, would be cheaper) - reverted. This build-agent key
+    # gets 403 "Model google/gemini-4-carbon-20261110 is banned" from OpenRouter (still so after Douglas
+    # checked his account settings). If retried: the pinned host (google-ai-studio) caps Carbon's output at
+    # 32768, so set max_tokens 32768 (65536 gets a 404 "no endpoints").
+    model: "google/gemini-3.1-pro-preview"
+    base_url: "https://openrouter.ai/api/v1"
+    temperature: 0.2
+    # Raised 8192 -> 65536 (2026-09-30, Douglas): output was truncated at 8192 (26281-char response);
+    # 65536 is the model's real output ceiling on OpenRouter.
+    max_tokens: 65536
+
+  reviewer:
+    # Must be a different vendor from whichever builder model is used - enforced in
+    # pipeline/config_loader.py.
+    # Swapped from qwen-2.5-coder-32b-instruct (Apache 2.0): confirmed via OpenRouter's own request
+    # logs that model's real 32768-token context window was being exceeded once a project's
+    # generated code/workflow grew large (spec + full code + this role's own completion budget no
+    # longer fit) - not a routing bug, a genuine model limit. qwen3-coder-next has a 262144-token
+    # window (8x), purpose-built for agentic coding review, same Qwen vendor family so the
+    # cross-vendor requirement above still holds.
+    # 2026-09-30 (Douglas): qwen/qwen3-coder-next -> anthropic/claude-sonnet-5.5, 50000 -> 100000.
+    # (Douglas's message also said "reviewer same model, output 300k"; the later, explicit "sonnet
+    # 5.5 100k" line was taken as authoritative. "Same as builder" would also violate the
+    # cross-vendor rule.) Note temperature 0.0 kept.
+    model: "anthropic/claude-sonnet-5.5"
+    base_url: "https://openrouter.ai/api/v1"
+    temperature: 0.0
+    # Raised 4096 -> 50000 (2026-09-27, alongside the agentic-builder rewrite): same ceiling,
+    # same fix, same reasoning as concept_advocate/business_analyst's own raise earlier the same
+    # day - a real response, including the mechanical_check_dismissals field with verbatim quotes
+    # for multiple findings, can need more room than 4096 once a project has real size to it.
+    max_tokens: 50000
+
+  reviewer_web:
+    # Used ONLY by `pipeline/unit_review.py --platform web` (Claude Code builds web UI directly, so this
+    # reviewer must NOT be Anthropic - unit_review refuses an anthropic/* model here). Added 2026-10-18;
+    # upgraded gpt-6-sol -> gpt-6.1-sol the same day (Douglas): same $2/$10 per M price, cache reads half
+    # the price, 1.05M context, 128K max output, and OpenRouter lists image input. Text-only for now
+    # (screenshot/vision review is a later step).
+    model: "openai/gpt-6.1-sol"
+    base_url: "https://openrouter.ai/api/v1"
+    temperature: 0.0
+    max_tokens: 50000
