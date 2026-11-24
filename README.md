@@ -1,65 +1,53 @@
-# AI Build Harness
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/harness-banner.svg">
+  <img alt="AI Build Harness" src="assets/harness-banner.svg" width="100%">
+</picture>
 
-A multi-model pipeline that turns a rough product idea into reviewed, tested, working code. The design
-rule behind it: **no single AI model is trusted alone.** A human writes and approves the spec, one AI
-builds, an AI from a *different company* reviews, and nothing ships without live tests and human approval.
+![Python](https://img.shields.io/badge/Python-3.12-1F3A68?style=flat-square&labelColor=0D1117)
+![LangGraph](https://img.shields.io/badge/LangGraph-pipeline-2F7D4F?style=flat-square&labelColor=0D1117)
+![Tests](https://img.shields.io/badge/tests-460%2B-1F7A7A?style=flat-square&labelColor=0D1117)
 
-Built by Douglas Yap. Python 3.12, LangGraph, OpenRouter (one API for models from several providers),
-Langfuse (run tracing), n8n (workflow automation target), Claude Code (orchestrator).
+A multi-model pipeline that turns a rough product idea into reviewed, tested, working code, for anyone who wants AI speed without trusting any single model. A human writes and approves the spec, one AI builds, an AI from a different company reviews, and nothing ships without live tests and human approval.
 
 ## How it works
 
-```
-  idea
-    |
-    v
- Concept intake (human + Claude Code) --> Business analyst AI (a different vendor) challenges the concept
-    |                                       Concept advocate AI answers; only product decisions go to the human
-    v
- HUMAN GATE 1: approve the concept
-    |
-    v
- Spec locked (PM and Architect AIs join on large projects) --> HUMAN GATE 2: approve the spec
-    |
-    v
- Builder AI: writes code, writes its own tests, runs the real system, repairs failures
-    |        (capped retries, capped tool turns, per-run token ceiling)
-    v
- Reviewer AI from a different vendor than the builder (enforced in code) reads only the spec
- and the finished code from disk, never the builder's reasoning
-    |
-    v
- Live verification (n8n workflows are deployed to a test instance and executed against fixtures)
-    |
-    v
- HUMAN GATE 3: approve deployment. Nothing auto-deploys.
+```mermaid
+flowchart LR
+    A[Concept] --> B[Spec<br/>human gate]
+    B --> C[Builder model]
+    C --> D[Reviewer model<br/>different provider]
+    D --> E[Live tests]
+    E --> F[Human approval]
+    F --> G[Deploy]
+    classDef gate fill:#1F3A68,stroke:#1F3A68,color:#FFFFFF
+    classDef ai fill:#2F7D4F,stroke:#2F7D4F,color:#FFFFFF
+    classDef approve fill:#1F3A68,stroke:#B3261E,stroke-width:3px,color:#FFFFFF
+    class A,B,G gate
+    class C,D,E ai
+    class F approve
 ```
 
-## What is in here
+- The concept is challenged by a second AI before the human sees it, and only product decisions reach the human.
+- The builder writes code, writes its own tests, runs the real system and repairs failures within set limits.
+- The reviewer reads only the spec and the finished code from disk, never the builder's reasoning.
+- n8n workflows are deployed to a test instance and executed against fixtures before approval.
 
-| Path | What it does |
-|---|---|
-| `pipeline/graph.py`, `pipeline/build_and_review.py` | The LangGraph build, review and repair loop |
-| `pipeline/nodes/` | The builder and reviewer nodes |
-| `pipeline/config_loader.py` | Loads each role's model and refuses to run if builder and reviewer share a vendor |
-| `pipeline/unit_review.py` | Independent cross-vendor review of one unit of code, with a standard defect checklist |
-| `pipeline/review_*.py` | Concept, PM, Architect and team-composition review stages |
-| `pipeline/n8n_*.py`, `pipeline/deploy_n8n.py` | Build, deploy and verify n8n workflows on a test instance |
-| `pipeline/token_guard.py`, `pipeline/retry.py` | Cost ceilings and retry caps |
-| `pipeline/decision_log.py`, `pipeline/build_scribe.py` | Decision memory: logs every gate decision and distils patterns |
-| `config/models.yaml` | Which model fills each role, per role token limits |
-| `AGENTS.md` | The working rules the AI team follows (the best place to see how the system is governed) |
-| `tests/` | The automated test suite (about 460 tests) |
+## Key features
 
-## Design decisions worth knowing
+- **Cross-vendor review:** the code refuses to start if builder and reviewer come from the same provider.
+- **Human approval gates:** concept, spec lock and deployment. Nothing auto-deploys.
+- **Ten model roles** across four providers, each set in `config/models.yaml`.
+- **Bounded runs:** retry caps, tool-turn caps and a per-run token ceiling.
+- **Decision memory:** every gate decision is logged, and patterns are regenerated from the logs, never edited by hand.
+- **Real verification:** 460+ automated tests, and builders must run the real system, not just write code that looks right.
 
-- **Cross-vendor review.** The reviewer must come from a different provider than the builder, and the
-  code refuses to start otherwise.
-- **Human approval gates** at concept, spec lock and deployment. AI proposes; the human decides.
-- **Bounded by design.** Retry caps, tool-turn caps, per-run token ceilings and model output limits.
-- **Decision memory.** Every gate decision is logged, and patterns are regenerated from the logs, never
-  edited by hand. The goal is that proposals increasingly match how the owner actually decides.
-- **Honest verification.** The builder must run the real system, not just write code that looks right.
+## Tech stack
+
+Python 3.12, LangGraph, OpenRouter (Anthropic, OpenAI, Google and DeepSeek models), Langfuse tracing, n8n, Claude Code. The working rules the AI team follows are in [AGENTS.md](AGENTS.md).
+
+## Status
+
+A personal working system, shared to show how it is built. The `memory/` and `projects/` folders are empty here on purpose, and the skills the rules mention are not included in this public copy.
 
 ## Setup
 
@@ -70,10 +58,6 @@ cp .env.example .env     # add your own OpenRouter and Langfuse keys
 python -m pytest tests -q
 ```
 
-`memory/` and `projects/` are empty here on purpose: they hold a user's own decision history and client
-projects. The `.claude/skills` the working rules mention are not included in this public copy.
+## Licence
 
-## Status and licence
-
-A personal working system, shared to show how it is built. All rights reserved: you are welcome to read
-it, but it is not licensed for reuse or redistribution.
+All rights reserved. You are welcome to read it, but it is not licensed for reuse or redistribution.
